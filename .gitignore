@@ -1,0 +1,74 @@
+# Build directories and files
+build*/
+
+# Platform dependent directories
+windows/downloads*/
+windows/build-*/
+linux/downloads*/
+linux/build-*/
+
+# IDEs
+.idea/
+
+# Visual Studio Code
+.history/
+.vscode/*
+!.vscode/launch.json
+!.vscode/settings.json
+!.vscode/tasks.json
+
+# CodeBlocks
+*.layout
+*.depend
+
+# GCC coverage files
+*.gcno
+*.gcda
+
+# GNU Debugger files
+.gdb_history
+
+# macOS general files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+__MACOSX
+
+# macOS: Files that might appear in the root of a volume
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# macOS: Directories potentially created on remote AFP share
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Xcode: User settings
+xcuserdata/
+.xcuserdatad
+*.xcuserstate
+xcschememanagement.plist
+
+# Xcode: Compatibility with Xcode 8 and earlier
+*.xcscmblueprint
+*.xccheckout
+
+# Xcode: Compatibility with Xcode 3 and earlier
+DerivedData/
+*.moved-aside
+*.pbxuser
+!default.pbxuser
+*.mode1v3
+!default.mode1v3
+*.mode2v3
+!default.mode2v3
+*.perspectivev3
+!default.perspectivev3
