@@ -122,12 +122,40 @@ void GatewayClient::onMessage(const ix::WebSocketMessagePtr& msg)
 		case ix::WebSocketMessageType::Close:
 			connected = false;
 			ready = false;
-			fprintf(stderr, "[GatewayClient] WebSocket is Closed (%i: %s)\n", msg->closeInfo.code, msg->closeInfo.reason.c_str());
+
+			if (msg->closeInfo.remote)
+				fprintf(stderr, "[GatewayClient] Gateway closed connection with %i: %s\n", msg->closeInfo.code, msg->closeInfo.reason.c_str());
+			else
+				fprintf(stderr, "[GatewayClient] Client closed connection with %i: %s\n", msg->closeInfo.code, msg->closeInfo.reason.c_str());
 
 			// Stop Heartbeat thread
 			hb.waiter.stop();
 			if (hb.thread.joinable())
 				hb.thread.join();
+
+			// We cannot resume session if it experienced Gateway error closure code.
+			// The session becomes invalid and next attempt to resume same session
+			// will result repeat closure with same code.
+			if (4000 <= msg->closeInfo.code && msg->closeInfo.code <= 4999) {
+				resumable = false;
+			}
+
+			switch (msg->closeInfo.code)
+			{
+				case GatewayCloseCodes::NotAuthenticated:
+				case GatewayCloseCodes::AuthenticationFailed:
+				case GatewayCloseCodes::InvalidShard:
+				case GatewayCloseCodes::ShardingRequired:
+				case GatewayCloseCodes::InvalidAPIVersion:
+				case GatewayCloseCodes::InvalidIntents:
+				case GatewayCloseCodes::DisallowedIntents:
+					// Turn off auto reconnection on these close codes
+					autoreconnect = false;
+					break;
+
+				default:
+					break;
+			}
 
 			break;
 
