@@ -29,11 +29,14 @@ namespace minicord
 		void heartbeatHandler();
 
 		void sendIdentify();
+		void sendResume();
 
 		std::unique_ptr<ix::WebSocket> ws;
 
-		std::string endpoint;
+		std::string gatewayUrl;
+		std::string resumeGatewayUrl;
 		std::string token;
+		std::string sessionId;
 
 		// 16381 is current default value
 		uint32_t capabilities = (
@@ -53,6 +56,9 @@ namespace minicord
 		);
 
 		bool connected;
+		bool autoreconnect;
+		bool ready;
+		bool resumable;
 		uint32_t sequence;
 
 		struct HeartbeatData

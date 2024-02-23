@@ -6,9 +6,12 @@
 using namespace minicord;
 
 GatewayClient::GatewayClient(std::string token)
-	: endpoint("wss://gateway.discord.gg/?v=10&encoding=json"),
+	: gatewayUrl("wss://gateway.discord.gg"),
 	  token(token),
 	  connected(false),
+	  autoreconnect(true),
+	  ready(false),
+	  resumable(false),
 	  sequence(0)
 {
 }
@@ -17,24 +20,48 @@ void GatewayClient::run()
 {
 	std::cout << "[GatewayClient] Running..." << std::endl;
 
+	autoreconnect = true;
+
 	ws = make_unique<ix::WebSocket>();
-	ws->setUrl(endpoint);
 	ws->disableAutomaticReconnection();
 
 	ws->setOnMessageCallback([this](const ix::WebSocketMessagePtr& msg) {
 		onMessage(const_cast<ix::WebSocketMessagePtr&>(msg));
 	});
 
-	// Connect to gateway and run in blocking mode
-	ws->connect(10);
-	ws->run();
+	std::string url;
+
+	while (autoreconnect)
+	{
+		if (resumable && !resumeGatewayUrl.empty())
+			url = resumeGatewayUrl;
+		else
+			url = gatewayUrl;
+
+		url.append("/?v=10&encoding=json");
+
+		ws->setUrl(url);
+
+		// Connect to gateway and run in blocking mode
+		ws->connect(10);
+		ws->run();
+	}
 }
 
 void GatewayClient::stop()
 {
 	std::cout << "[GatewayClient] Stopping..." << std::endl;
 
-	ws->stop(ix::WebSocketCloseConstants::kNormalClosureCode);
+	autoreconnect = false;
+
+	// Stop connections and close with 1000 code
+	// to invalidate session and appear as Offline.
+	ws->stop(1000, "");
+
+	sequence = 0;
+	resumable = false;
+	resumeGatewayUrl.clear();
+	sessionId.clear();
 }
 
 void GatewayClient::send(std::string text)
@@ -56,7 +83,7 @@ void GatewayClient::sendOpcode(GatewayOpcode op, rapidjson::Value& data)
 
 	std::string msg = stringifyJSON(payload);
 
-	if (op == GatewayOpcode::IDENTIFY) {
+	if (op == GatewayOpcode::IDENTIFY || op == GatewayOpcode::RESUME) {
 		// Exclude outputing user token in payload
 		fprintf(stdout, "\x1B[92m[<] OP: %d\x1B[0m\n", op);
 	} else {
@@ -94,6 +121,7 @@ void GatewayClient::onMessage(const ix::WebSocketMessagePtr& msg)
 
 		case ix::WebSocketMessageType::Close:
 			connected = false;
+			ready = false;
 			fprintf(stderr, "[GatewayClient] WebSocket is Closed (%i: %s)\n", msg->closeInfo.code, msg->closeInfo.reason.c_str());
 
 			// Stop Heartbeat thread
@@ -105,6 +133,7 @@ void GatewayClient::onMessage(const ix::WebSocketMessagePtr& msg)
 
 		case ix::WebSocketMessageType::Error:
 			connected = false;
+			ready = false;
 			fprintf(stderr, "[GatewayClient] WebSocket error: %s\n", msg->errorInfo.reason.c_str());
 			break;
 
@@ -157,8 +186,39 @@ void GatewayClient::parsePayload(std::string message)
 			hb.waiter.start();
 			hb.thread = std::thread(&GatewayClient::heartbeatHandler, this);
 
-			// Send IDENTIFY payload
-			sendIdentify();
+			if (resumable) {
+				// Send RESUME payload to resume current session
+				sendResume();
+			} else {
+				// Send IDENTIFY payload to make new session
+				sendIdentify();
+			}
+			break;
+
+		case GatewayOpcode::INVALID_SESSION:
+			if (data.GetBool() && resumable) {
+				std::cout << "[GatewayClient] Got INVALID_SESSION opcode and it's resumable, resuming..." << std::endl;
+
+				sendResume();
+			} else {
+				std::cout << "[GatewayClient] Got INVALID_SESSION opcode, re-identifying..." << std::endl;
+
+				sequence = 0;
+				resumable = false;
+				sessionId.clear();
+				resumeGatewayUrl.clear();
+
+				sendIdentify();
+			}
+			break;
+
+		case GatewayOpcode::RECONNECT:
+			std::cout << "[GatewayClient] Got RECONNECT opcode, reconnecting..." << std::endl;
+
+			// Close connection with 1012 (Service is restarting) status code.
+			// This is because it will invalidate session if we close WebSocket
+			// with 1000 or 1001, but we supposed to resume current session.
+			ws->close(1012, "");
 			break;
 
 		case GatewayOpcode::DISPATCH:
@@ -176,6 +236,12 @@ void GatewayClient::handleEvent(std::string event, rapidjson::Document& data)
 	// TODO: Move to signals and slots
 
 	if (event == "READY") {
+		// Get Session ID and Resume Gateway URL for resuming session in next
+		sessionId = data["session_id"].GetString();
+		resumeGatewayUrl = data["resume_gateway_url"].GetString();
+		resumable = true;
+
+		// Get user data
 		rapidjson::Document user(rapidjson::kObjectType);
 		user.CopyFrom(data["user"], user.GetAllocator());
 
@@ -200,6 +266,14 @@ void GatewayClient::handleEvent(std::string event, rapidjson::Document& data)
 			fprintf(stdout, "\x1B[93m[!] Welcome, %s#%s! (ID: %s)\x1B[0m\n", me.username.c_str(), me.discriminator.c_str(), me.id.c_str());
 		else
 			fprintf(stdout, "\x1B[93m[!] Welcome, %s! (ID: %s)\x1B[0m\n", me.username.c_str(), me.id.c_str());
+
+		fprintf(stdout, "\x1B[93m[!] Session ID: %s\x1B[0m\n", sessionId.c_str());
+
+		ready = true;
+	} else if (event == "RESUMED") {
+		fprintf(stdout, "\x1B[93m[!] Successfully resumed session %s\x1B[0m\n", sessionId.c_str());
+
+		ready = true;
 	}
 }
 
@@ -266,4 +340,17 @@ void GatewayClient::sendIdentify()
 
 	// Send IDENTIFY payload
 	sendOpcode(GatewayOpcode::IDENTIFY, identity);
+}
+
+void GatewayClient::sendResume()
+{
+	rapidjson::Document resume(rapidjson::kObjectType);
+	rapidjson::Document::AllocatorType& allocator = resume.GetAllocator();
+
+	resume.AddMember("token", token, allocator);
+	resume.AddMember("session_id", sessionId, allocator);
+	resume.AddMember("seq", sequence, allocator);
+
+	// Send RESUME payload
+	sendOpcode(GatewayOpcode::RESUME, resume);
 }
