@@ -2,6 +2,8 @@
 #include "etc/utils.h"
 
 #include <iostream>
+#include <thread>
+#include <chrono>
 
 using namespace minicord;
 
@@ -52,6 +54,10 @@ void GatewayClient::run()
 		// Connect to gateway and run in blocking mode
 		ws->connect(10);
 		ws->run();
+
+		// Wait before next connection
+		if (autoreconnect)
+			std::this_thread::sleep_for(std::chrono::milliseconds(2000));
 	}
 }
 
