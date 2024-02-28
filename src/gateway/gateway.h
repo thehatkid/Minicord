@@ -64,6 +64,7 @@ namespace minicord
 		struct HeartbeatData
 		{
 			uint32_t interval;
+			bool ack;
 			std::thread thread;
 			Waiter waiter;
 		} hb;

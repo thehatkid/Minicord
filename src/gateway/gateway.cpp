@@ -108,12 +108,22 @@ void GatewayClient::heartbeatHandler()
 		if (!hb.waiter.wait_for(std::chrono::milliseconds(hb.interval)))
 			break;
 
+		if (!hb.ack) {
+			// This can mean the connection is dead, so we will try to reconnect
+			// and resume session (re-IDENTIFY if session got expired due inactivity)
+			std::cout << "[GatewayClient] Last Heartbeat was not ACK'd, reconnecting..." << std::endl;
+			ws->close(1006, "");
+			break;
+		}
+
 		// Send HEARTBEAT opcode with last sequence number
 		rapidjson::Value sequenceValue;
 		if (sequence > 0)
 			sequenceValue = sequence;
 
 		sendOpcode(GatewayOpcode::HEARTBEAT, sequenceValue);
+
+		hb.ack = false;
 	}
 }
 
@@ -136,6 +146,7 @@ void GatewayClient::onMessage(const ix::WebSocketMessagePtr& msg)
 				fprintf(stderr, "[GatewayClient] Client closed connection with %i: %s\n", msg->closeInfo.code, msg->closeInfo.reason.c_str());
 
 			// Stop Heartbeat thread
+			hb.ack = false;
 			hb.waiter.stop();
 			if (hb.thread.joinable())
 				hb.thread.join();
@@ -208,6 +219,7 @@ void GatewayClient::parsePayload(std::string message)
 	rapidjson::Document data(rapidjson::kObjectType);
 	data.CopyFrom(payload["d"], data.GetAllocator());
 
+	// For debugging purposes
 	if (opcode == GatewayOpcode::DISPATCH)
 		fprintf(stdout, "\x1B[94m[>] E: %s | S: %d\x1B[0m\n", event.c_str(), sequence);
 	else
@@ -218,6 +230,7 @@ void GatewayClient::parsePayload(std::string message)
 		case GatewayOpcode::HELLO:
 			// Set Heartbeat interval and start Heartbeating gateway
 			hb.interval = data["heartbeat_interval"].GetUint();
+			hb.ack = true;
 			hb.waiter.start();
 			hb.thread = std::thread(&GatewayClient::heartbeatHandler, this);
 
@@ -258,6 +271,10 @@ void GatewayClient::parsePayload(std::string message)
 
 		case GatewayOpcode::DISPATCH:
 			handleEvent(event, data);
+			break;
+
+		case GatewayOpcode::HEARTBEAT_ACK:
+			hb.ack = true;
 			break;
 
 		default:
