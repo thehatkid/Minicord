@@ -82,7 +82,18 @@ void GatewayClient::send(std::string text)
 	if (!connected)
 		return;
 
-	ws->sendText(text);
+	try {
+		ws->sendText(text);
+	} catch(const std::system_error &exc) {
+		std::cerr << "[GatewayClient::send] System error occurred: " << exc.what() << std::endl;
+
+		// Sometimes can happen we did get TCP Reset but IXWebSocket does not handle TCP Resets
+		// and any Send frame will lead to std::system_error exception.
+		// As a temprarly solution to continue connection, we close connection again.
+
+		// Force reconnect
+		ws->close(1006, "");
+	}
 }
 
 void GatewayClient::sendOpcode(GatewayOpcode op, rapidjson::Value& data)
